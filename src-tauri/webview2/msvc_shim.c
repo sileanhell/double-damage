@@ -1,19 +1,15 @@
-// Minimal MSVC C++ runtime pieces required by WebView2LoaderStatic.lib (built with MSVC),
-// so it can be linked statically on the windows-gnullvm toolchain.
 #include <stdint.h>
 #include <stdlib.h>
 #include <windows.h>
 
-// ---- /GS stack cookie --------------------------------------------------------
 uintptr_t __security_cookie = 0x00002B992DDFA232ull;
 
 void __security_check_cookie(uintptr_t cookie) {
     if (cookie != __security_cookie) {
-        __fastfail(2 /* FAST_FAIL_STACK_COOKIE_CHECK_FAILURE */);
+        __fastfail(2);
     }
 }
 
-// ---- operator new / delete (MSVC-mangled names) ------------------------------
 typedef struct { char unused; } nothrow_t;
 const nothrow_t msvc_nothrow __asm__("?nothrow@std@@3Unothrow_t@1@B") = {0};
 
@@ -35,7 +31,6 @@ void msvc_delete_array(void *p) { free(p); }
 void msvc_delete_sized(void *p, size_t size) __asm__("??3@YAXPEAX_K@Z");
 void msvc_delete_sized(void *p, size_t size) { (void)size; free(p); }
 
-// ---- thread-safe local statics (same protocol as vcruntime thread_safe_statics.cpp)
 #define EPOCH_START INT32_MIN
 #define UNINITIALIZED 0
 #define BEING_INITIALIZED (-1)

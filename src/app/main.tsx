@@ -10,3 +10,5 @@ syncTitle();
 new MutationObserver(syncTitle).observe(document.head, { subtree: true, childList: true, characterData: true });
 
 render(() => <Wrapper />, document.querySelector("main") as HTMLElement);
+
+appWindow.show().catch(console.error);

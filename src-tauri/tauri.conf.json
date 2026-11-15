@@ -11,19 +11,13 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Double Damage",
-        "visible": false,
-        "backgroundColor": "#000000",
-        "width": 1280,
-        "height": 720,
-        "minWidth": 1280,
-        "minHeight": 720
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
     }
   },
   "bundle": {

@@ -1,5 +1,65 @@
 @import "tailwindcss";
 
-html {
-  @apply text-white;
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-edge: var(--edge);
+  --color-edge-active: var(--edge-active);
+}
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --animate-load-slide: load-slide 1.1s ease-in-out infinite;
+  --animate-skeleton-sweep: skeleton-sweep 1.6s ease-in-out infinite;
+
+  @keyframes load-slide {
+    from {
+      transform: translateX(-120%);
+    }
+    to {
+      transform: translateX(420%);
+    }
+  }
+
+  /* Light band sweeping across a skeleton placeholder; the hold at the end adds a pause between sweeps. */
+  @keyframes skeleton-sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    60%,
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}
+
+:root {
+  /* Overwritten at runtime with the color extracted from the background image. */
+  --accent: #fff;
+  --accent-fg: #000;
+  /* Prompt outline at rest / while focused; also the attach / send button fills. */
+  --edge: color-mix(in srgb, color-mix(in srgb, var(--accent) 15%, white) 28%, transparent);
+  --edge-active: color-mix(in srgb, var(--accent) 75%, white);
+  /* App backdrop: near-black tinted with the accent (neutral gray when the accent is white). */
+  --surface: color-mix(in oklab, var(--accent) 3%, #070707);
+  --shade-top: color-mix(in oklab, color-mix(in oklab, var(--accent) 7%, #121212) 82%, transparent);
+  --shade-bottom: color-mix(in oklab, color-mix(in oklab, var(--accent) 3%, #050505) 94%, transparent);
+}
+
+@utility thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+}
+
+@layer base {
+  /* Desktop app: the window never scrolls, even when something (e.g. the effort-slider thumb) scales past it. */
+  html,
+  body {
+    overflow: hidden;
+  }
+
+  button:not(:disabled):not([data-disabled]),
+  [role="button"]:not([aria-disabled="true"]):not([data-disabled]) {
+    cursor: pointer;
+  }
 }

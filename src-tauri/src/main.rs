@@ -3,11 +3,10 @@
 mod attachments;
 mod background;
 mod bash;
+mod core_process;
 mod data_dir;
-mod gateway;
-mod gguf;
 mod hardware;
-mod llama_server;
+mod job;
 mod models;
 mod store;
 mod tasks;
@@ -51,9 +50,14 @@ fn main() {
         .manage(bash::Runs::default())
         .manage(store::Store::load(&data))
         .manage(data_dir::DataDir::new(data.clone()))
+        .manage(core_process::CoreProcess::default())
         .setup(move |app| {
             background::allow(app.handle(), &data);
-            gateway::commands::setup(app.handle());
+            // The core starts in the background; the page follows `core-info` events.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                core_process::start(&handle);
+            });
             create_main_window(app.handle(), &data.join(data_dir::WEBVIEW_DIR), None)?;
             Ok(())
         })
@@ -71,16 +75,11 @@ fn main() {
             background::background_save,
             background::background_path,
             background::background_clear,
-            llama_server::llama_server_status,
-            llama_server::llama_server_devices,
-            llama_server::llama_server_install,
-            llama_server::llama_server_uninstall,
             models::models_list,
             models::model_download,
             models::model_import,
             models::model_delete,
             models::models_dir,
-            gguf::model_info,
             tasks::task_cancel,
             bash::bash_status,
             bash::bash_latest,
@@ -88,13 +87,9 @@ fn main() {
             bash::bash_uninstall,
             bash::bash_run,
             bash::bash_cancel,
-            gateway::commands::gateway_info,
-            gateway::commands::gateway_catalog,
-            gateway::commands::gateway_restart,
-            gateway::commands::gateway_regenerate_token,
-            gateway::commands::llama_instances,
-            gateway::commands::llama_load,
-            gateway::commands::llama_unload,
+            core_process::core_info,
+            core_process::core_restart,
+            core_process::core_set_token,
             tools::tool_read,
             tools::tool_write,
             tools::tool_edit,
@@ -109,7 +104,7 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                gateway::commands::shutdown(app);
+                core_process::stop(app);
             }
             // Closing the last window normally quits; not while it is being swapped for a new one.
             if let RunEvent::ExitRequested { api, code: None, .. } = event

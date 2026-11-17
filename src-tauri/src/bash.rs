@@ -671,8 +671,8 @@ async fn run(
     // Everything the command starts joins this job; dropping it ends them all. Should the job
     // fail (very unlikely: nested jobs work since Windows 8) the command still runs; then
     // kills reach bash only, and the bounded drain below keeps leftovers from hanging us.
-    let tree = crate::gateway::job::Tree::adopt(&child);
-    if let Err(e) = crate::gateway::job::resume(&child) {
+    let tree = crate::job::Tree::adopt(&child);
+    if let Err(e) = crate::job::resume(&child) {
         let _ = child.start_kill();
         return Err(format!("failed to start bash: {e}"));
     }
@@ -776,7 +776,7 @@ async fn run(
     Ok(RunResult { exit_code, timed_out, cancelled, output, omitted, duration_ms: started.elapsed().as_millis() as u64 })
 }
 
-fn kill(child: &mut tokio::process::Child, tree: Option<&crate::gateway::job::Tree>) {
+fn kill(child: &mut tokio::process::Child, tree: Option<&crate::job::Tree>) {
     match tree {
         Some(tree) => tree.kill(),
         None => {

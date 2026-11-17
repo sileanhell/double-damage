@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
 import { createResource, createRoot, createSignal } from "solid-js";
+import { api, inTauri, onCoreEvent, post } from "./core";
 import { runTask } from "./tasks";
 
 export type ProviderId = "llama-server";
@@ -28,7 +28,7 @@ export const providersForRepo = (repo: Parameters<Provider["supportsRepo"]>[0]) 
   PROVIDERS.filter((provider) => provider.supportsRepo(repo));
 export const providersForFile = (fileName: string) => PROVIDERS.filter((provider) => provider.supportsFile(fileName));
 
-// --- llama-server ------------------------------------------------------------
+// --- llama-server (installed and run by dd-core) -------------------------------
 
 /** `backend`/`gpu`: the installed build, or the one an install would pick for this machine. */
 export type LlamaServerStatus = {
@@ -46,7 +46,7 @@ export { llamaServer };
 
 export async function refreshLlamaServer() {
   try {
-    setLlamaServer(await invoke<LlamaServerStatus>("llama_server_status"));
+    setLlamaServer(await api<LlamaServerStatus>("/dd/llama"));
   } catch (error) {
     console.error(error);
     setLlamaServer({ installed: false, version: null });
@@ -55,17 +55,17 @@ export async function refreshLlamaServer() {
 
 export async function installLlamaServer() {
   const status = await runTask({ id: LLAMA_SERVER_TASK, kind: "llama-server", label: "llama-server" }, () =>
-    invoke<LlamaServerStatus>("llama_server_install"),
+    post<LlamaServerStatus>("/dd/llama/install"),
   );
   setLlamaServer(status);
 }
 
 export async function uninstallLlamaServer() {
-  await invoke("llama_server_uninstall");
+  await post("/dd/llama/uninstall");
   await refreshLlamaServer();
 }
 
-void refreshLlamaServer();
+if (inTauri) onCoreEvent("ready", () => void refreshLlamaServer());
 
 /** A GPU as llama-server sees it through one backend (a card with CUDA and Vulkan is listed twice). */
 export type LlamaDevice = { id: string; backend: string; name: string; memory: number };
@@ -77,7 +77,7 @@ const [devices] = createRoot(() =>
       return status?.installed ? `${status.version}:${status.backend}` : false;
     },
     // null = listing failed (told apart from "no GPUs").
-    () => invoke<LlamaDevice[]>("llama_server_devices").catch((error): null => (console.error(error), null)),
+    () => api<LlamaDevice[]>("/dd/llama/devices").catch((error): null => (console.error(error), null)),
   ),
 );
 

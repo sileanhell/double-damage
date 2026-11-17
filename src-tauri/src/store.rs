@@ -49,16 +49,6 @@ impl Store {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned()
     }
 
-    /// Sets (or with `None` removes) one key and saves the file in `dir`.
-    pub fn set(&self, dir: &Path, key: &str, value: Option<String>) -> Result<(), String> {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        match value {
-            Some(value) => map.insert(key.to_string(), value),
-            None => map.remove(key),
-        };
-        write(dir, &map)
-    }
-
     /// Script that hands the settings to the page before any of its own code runs.
     pub fn init_script(&self) -> String {
         let map = self.0.lock().unwrap_or_else(|e| e.into_inner());

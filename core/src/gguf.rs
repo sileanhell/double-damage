@@ -8,11 +8,8 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::AppHandle;
 
-use crate::tasks::{err_str, storage_subdir};
-
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     architecture: Option<String>,
@@ -154,10 +151,6 @@ fn read_kv(path: &Path) -> std::io::Result<HashMap<String, Value>> {
     Ok(kv)
 }
 
-fn read_info(path: &Path) -> std::io::Result<ModelInfo> {
-    Ok(info_from(&read_kv(path)?))
-}
-
 fn info_from(kv: &HashMap<String, Value>) -> ModelInfo {
 
     let arch = match kv.get("general.architecture") {
@@ -257,18 +250,4 @@ pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
             repeat_last_n: int("penalty_last_n"),
         },
     })
-}
-
-/// Metadata of a local GGUF model (`name` is a file in the models folder; for a split model,
-/// pass its first part).
-#[tauri::command]
-pub async fn model_info(app: AppHandle, name: String) -> Result<ModelInfo, String> {
-    if name.is_empty() || name.contains(['/', '\\', ':']) || name == ".." {
-        return Err(format!("invalid model file name: {name:?}"));
-    }
-    let path = storage_subdir(&app, "models")?.join(name);
-    tauri::async_runtime::spawn_blocking(move || read_info(&path))
-        .await
-        .map_err(err_str)?
-        .map_err(err_str)
 }

@@ -137,7 +137,7 @@ function TemplateText(props: { text: string }) {
   );
 }
 
-function ProviderPrompt(props: { provider: string }) {
+function ProviderPrompt(props: { provider: string; prefix?: string }) {
   const exampleCtx = (): PromptContext => {
     const cwd = PLACEHOLDERS.cwd.example;
     return {
@@ -152,7 +152,12 @@ function ProviderPrompt(props: { provider: string }) {
       instructions: [{ file: `${cwd}/AGENTS.md`, content: "…" }],
     };
   };
-  const blocks = createMemo(() => promptBlocks(exampleCtx()));
+  const blocks = createMemo(() => {
+    const blocks = promptBlocks(exampleCtx());
+    // A provider-enforced block (e.g. Claude's sign-in identity) rides first and read-only.
+    if (props.prefix) blocks.unshift({ id: "provider-prefix", title: t("agent.block.providerPrefix"), text: props.prefix });
+    return blocks;
+  });
 
   // The addition is edited locally and saved shortly after typing stops.
   const [draft, setDraft] = createSignal(promptAddition(props.provider));
@@ -211,13 +216,13 @@ function ProviderPrompt(props: { provider: string }) {
 }
 
 /** A provider's system prompt: the read-only base blocks plus the user's addition. */
-export function ProviderPromptSettings(props: { provider: string }) {
+export function ProviderPromptSettings(props: { provider: string; prefix?: string }) {
   return (
     <div>
       <div class="text-base font-medium">{t("agent.prompt.section")}</div>
       <p class="mt-1 text-sm text-white/45">{t("agent.prompt.hint")}</p>
       <div class="mt-5">
-        <ProviderPrompt provider={props.provider} />
+        <ProviderPrompt provider={props.provider} prefix={props.prefix} />
       </div>
     </div>
   );

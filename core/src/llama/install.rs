@@ -6,21 +6,20 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
 
-use crate::tasks::{
-    CANCELLED, Progress, Tasks, err_str, http_client, remove_dir_quiet,
-    storage_root, stream_to_file,
+use crate::{
+    paths::Paths,
+    tasks::{CANCELLED, Progress, Tasks, http_client, remove_dir_quiet, stream_to_file},
+    util::err_str,
 };
 
-const TASK_ID: &str = "llama-server";
+pub const TASK_ID: &str = "llama-server";
 const TASK_KIND: &str = "llama-server";
-const DIR_NAME: &str = "llama-server";
 const INSTALL_FILE: &str = "install.json";
 const EXE_NAME: &str = "llama-server.exe";
 /// Newest builds first. `releases/latest` can't be used: it may point at a release without
 /// Windows binaries (the numbered `bNNNN` builds are published as pre-releases).
-const RELEASES_URL: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15";
+const RELEASES_URL: &str = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30";
 
 #[cfg(target_arch = "aarch64")]
 const ARCH: &str = "arm64";
@@ -44,6 +43,18 @@ enum Backend {
 }
 
 impl Backend {
+    fn parse(name: &str) -> Option<Self> {
+        let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+        Some(match name.as_str() {
+            "cuda13" | "cuda" => Self::Cuda13,
+            "cuda12" => Self::Cuda12,
+            "vulkan" => Self::Vulkan,
+            "opencl" | "opencladreno" => Self::OpenclAdreno,
+            "cpu" => Self::Cpu,
+            _ => return None,
+        })
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Cuda13 => "CUDA 13",
@@ -164,7 +175,7 @@ impl Plan {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct LlamaServerStatus {
     installed: bool,
@@ -208,9 +219,9 @@ fn read_install(dir: &Path) -> Option<InstallInfo> {
     (!info.exe.is_empty() && dir.join(&info.exe).is_file()).then_some(info)
 }
 
-/// The installed `llama-server.exe` under the storage root, if any.
-pub fn installed_exe(root: &Path) -> Option<PathBuf> {
-    let dir = root.join(DIR_NAME);
+/// The installed `llama-server.exe`, if any.
+pub fn installed_exe(paths: &Paths) -> Option<PathBuf> {
+    let dir = paths.llama_dir();
     read_install(&dir).map(|info| dir.join(info.exe))
 }
 
@@ -235,14 +246,13 @@ fn read_status(dir: &Path) -> LlamaServerStatus {
     }
 }
 
-#[tauri::command]
-pub async fn llama_server_status(app: AppHandle) -> Result<LlamaServerStatus, String> {
-    let dir = storage_root(&app)?.join(DIR_NAME);
-    tauri::async_runtime::spawn_blocking(move || read_status(&dir)).await.map_err(err_str)
+pub async fn status(paths: &Paths) -> Result<LlamaServerStatus, String> {
+    let dir = paths.llama_dir();
+    tokio::task::spawn_blocking(move || read_status(&dir)).await.map_err(err_str)
 }
 
 /// A device llama-server can run a model on, as listed by `llama-server --list-devices`.
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Device {
     /// What `--device` takes, e.g. "CUDA0", "Vulkan1".
@@ -272,12 +282,11 @@ fn parse_device(line: &str) -> Option<Device> {
 
 /// GPUs the installed llama-server can use, each once per backend (a card with CUDA and Vulkan
 /// shows up twice). Empty when llama-server is not installed.
-#[tauri::command]
-pub async fn llama_server_devices(app: AppHandle) -> Result<Vec<Device>, String> {
-    let dir = storage_root(&app)?.join(DIR_NAME);
+pub async fn devices(paths: &Paths) -> Result<Vec<Device>, String> {
+    let dir = paths.llama_dir();
     let Some(info) = read_install(&dir) else { return Ok(Vec::new()) };
     let exe = dir.join(&info.exe);
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let output = std::process::Command::new(&exe)
@@ -300,9 +309,8 @@ pub async fn llama_server_devices(app: AppHandle) -> Result<Vec<Device>, String>
     .map_err(err_str)?
 }
 
-#[tauri::command]
-pub async fn llama_server_uninstall(app: AppHandle) -> Result<(), String> {
-    let dir = storage_root(&app)?.join(DIR_NAME);
+pub async fn uninstall(paths: &Paths) -> Result<(), String> {
+    let dir = paths.llama_dir();
     match tokio::fs::remove_dir_all(&dir).await {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -310,37 +318,55 @@ pub async fn llama_server_uninstall(app: AppHandle) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-pub async fn llama_server_install(app: AppHandle) -> Result<LlamaServerStatus, String> {
-    let guard = app.state::<Tasks>().start(TASK_ID)?;
-    let root = storage_root(&app)?;
+/// Downloads the newest llama.cpp build that has every backend this machine can use (or the
+/// ones in `only`, by label: `CUDA 13`, `CUDA 12`, `Vulkan`, `OpenCL`, `CPU`) and swaps it in.
+/// `version` pins a release tag (e.g. `b6500`).
+pub async fn install(
+    paths: &Paths,
+    tasks: &Tasks,
+    only: Option<Vec<String>>,
+    version: Option<String>,
+) -> Result<LlamaServerStatus, String> {
+    let mut progress = tasks.start(TASK_ID, TASK_KIND, "llama-server")?;
+    let root = paths.data.clone();
     let downloads = root.join(".llama-server-download");
     let tmp_dir = root.join(".llama-server-new");
-    let mut progress = Progress::new(&app, &guard, TASK_KIND, DIR_NAME);
 
-    let result = install_inner(&root, &downloads, &tmp_dir, &mut progress).await;
-    progress.finish();
+    let result = install_inner(&root, &paths.llama_dir(), &downloads, &tmp_dir, &mut progress, only, version).await;
+    progress.finish(result.as_ref().err().cloned());
 
     remove_dir_quiet(&downloads);
     if result.is_err() {
         remove_dir_quiet(&tmp_dir);
     }
-    drop(guard);
     result
 }
 
 async fn install_inner(
     root: &Path,
+    dest: &Path,
     downloads: &Path,
     tmp_dir: &Path,
     progress: &mut Progress,
+    only: Option<Vec<String>>,
+    version: Option<String>,
 ) -> Result<LlamaServerStatus, String> {
+    let _ = root;
     // Leftovers from an earlier crashed attempt.
     remove_dir_quiet(downloads);
     remove_dir_quiet(tmp_dir);
     tokio::fs::create_dir_all(downloads).await.map_err(err_str)?;
 
-    let plan = tauri::async_runtime::spawn_blocking(Plan::detect).await.map_err(err_str)?;
+    let mut plan = tokio::task::spawn_blocking(Plan::detect).await.map_err(err_str)?;
+    if let Some(only) = only.filter(|only| !only.is_empty()) {
+        let wanted: Vec<Backend> = only
+            .iter()
+            .map(|name| Backend::parse(name).ok_or_else(|| format!("unknown backend {name:?} (cuda13, cuda12, vulkan, opencl, cpu)")))
+            .collect::<Result<_, _>>()?;
+        plan.backends = wanted;
+        plan.backends.sort();
+        plan.backends.dedup();
+    }
     let label = plan.backend_label();
 
     let client = http_client()?;
@@ -363,9 +389,13 @@ async fn install_inner(
     let (release, assets) = releases
         .iter()
         .filter(|release| !release.draft)
+        .filter(|release| version.as_ref().is_none_or(|v| &release.tag_name == v))
         .find_map(|release| Some((release, plan.assets(release)?)))
-        .ok_or_else(|| format!("no recent llama.cpp release has {label} builds for Windows {ARCH}"))?;
-    progress.set_label(format!("{} В· {label}", release.tag_name));
+        .ok_or_else(|| match &version {
+            Some(v) => format!("release {v} (among the 30 newest) has no {label} builds for Windows {ARCH}"),
+            None => format!("no recent llama.cpp release has {label} builds for Windows {ARCH}"),
+        })?;
+    progress.set_label(format!("{} · {label}", release.tag_name));
 
     // All archives as one transfer.
     let total: u64 = assets.iter().map(|asset| asset.size).sum();
@@ -382,7 +412,7 @@ async fn install_inner(
     // the files it lacks, next to the executable.
     let cancel = progress.cancel_flag();
     let tmp_owned = tmp_dir.to_path_buf();
-    let exe_rel = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+    let exe_rel = tokio::task::spawn_blocking(move || -> Result<String, String> {
         let (base, extras) = files.split_first().ok_or("nothing to install")?;
         extract_zip(base, &tmp_owned, &cancel)?;
         let exe = find_file(&tmp_owned, EXE_NAME)
@@ -412,17 +442,16 @@ async fn install_inner(
     progress.check_cancel()?;
 
     // Swap the fresh install into place.
-    let dest = root.join(DIR_NAME);
-    match tokio::fs::remove_dir_all(&dest).await {
+    match tokio::fs::remove_dir_all(dest).await {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("failed to remove previous llama-server install: {e}")),
     }
-    tokio::fs::rename(tmp_dir, &dest)
+    tokio::fs::rename(tmp_dir, dest)
         .await
         .map_err(err_str)?;
 
-    Ok(read_status(&dest))
+    Ok(read_status(dest))
 }
 
 /// Streams one release asset to `path`, continuing the progress count from `offset`.

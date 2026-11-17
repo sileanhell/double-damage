@@ -5,7 +5,8 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "dev:web": "vite",
-    "build:web": "tsc && vite build"
+    "build:web": "tsc && vite build",
+    "build:core": "cargo build -p dd-core --release"
   },
   "dependencies": {
     "@kobalte/core": "^0.13.14",

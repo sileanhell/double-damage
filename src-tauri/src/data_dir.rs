@@ -43,7 +43,10 @@ pub fn sessions_db_path(dir: State<'_, DataDir>) -> String {
 }
 
 /// Everything else that moves (the chat database goes separately, see `move_sessions_db`).
-const ENTRIES: [&str; 5] = [crate::store::FILE, crate::background::DIR, "models", "llama-server", "bash"];
+/// `core` is dd-core's own folder (sign-ins, token); `devin` / `claude` are what the app kept
+/// before the core existed (dd-core takes them over on first start).
+const ENTRIES: [&str; 8] =
+    [crate::store::FILE, crate::background::DIR, "models", "llama-server", "bash", "core", "devin", "claude"];
 
 /// Current data folder (managed state). Changes at runtime when the user picks another one.
 pub struct DataDir(RwLock<PathBuf>);
@@ -366,7 +369,10 @@ pub async fn data_dir_apply(app: AppHandle, path: Option<String>) -> Result<(), 
 
     // The old window is gone by now, so never bail out before a new one is opened.
     let (from, to) = (current, target.clone());
+    let core_app = app.clone();
     let moved = tauri::async_runtime::spawn_blocking(move || {
+        // The core holds its files (and the running models) open; it restarts on the new folder.
+        crate::core_process::stop(&core_app);
         move_entries(&from, &to);
         // The old profile stays locked until exit; the new folder remembers to delete it.
         let mut stale = read_stale(&to);
@@ -384,6 +390,10 @@ pub async fn data_dir_apply(app: AppHandle, path: Option<String>) -> Result<(), 
     app.state::<DataDir>().set(target.clone());
     app.state::<crate::store::Store>().reload(&target);
     crate::background::allow(&app, &target);
+    let core_app = app.clone();
+    std::thread::spawn(move || {
+        crate::core_process::start(&core_app);
+    });
     let result = crate::create_main_window(&app, &target.join(WEBVIEW_DIR), geometry.flatten());
     SWITCHING.store(false, Ordering::SeqCst);
     result.map_err(err_str)

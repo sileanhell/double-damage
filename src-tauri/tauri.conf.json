@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "identifier": "md.usm.double-damage",
   "build": {
-    "beforeDevCommand": "bun run dev:web",
+    "beforeDevCommand": "cargo build -p dd-core && bun run dev:web",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "bun run build:web",
     "frontendDist": "../dist"

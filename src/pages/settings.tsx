@@ -4,6 +4,8 @@ import { AgentSettings } from "../components/agent-settings";
 import { BackgroundSettings } from "../components/background-settings";
 import { DataDirSettings } from "../components/data-dir-settings";
 import { BashSettings } from "../components/bash-settings";
+import { ClaudeSettings } from "../components/claude-settings";
+import { DevinSettings } from "../components/devin-settings";
 import { Dropdown } from "../components/dropdown";
 import { GatewaySettings } from "../components/gateway-settings";
 import { LlamaServerSettings } from "../components/llama-server-settings";
@@ -138,6 +140,12 @@ const TABS: { id: string; label: MessageKey; content: () => JSX.Element }[] = [
     content: () => (
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
         <LlamaServerSettings />
+        <div class="mt-5 border-t border-white/[0.06] pt-5">
+          <DevinSettings />
+        </div>
+        <div class="mt-5 border-t border-white/[0.06] pt-5">
+          <ClaudeSettings />
+        </div>
       </div>
     ),
   },

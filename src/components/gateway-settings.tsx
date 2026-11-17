@@ -8,6 +8,7 @@ import {
   regenerateGatewayToken,
   restartGateway,
 } from "../lib/gateway";
+import { coreInfo } from "../lib/core";
 import { t } from "../lib/i18n";
 import { flushStorage, storage } from "../lib/storage";
 
@@ -63,7 +64,12 @@ export function GatewaySettings() {
 
   return (
     <div>
-      <div class="text-base font-medium">{t("gateway.title")}</div>
+      <div class="flex items-baseline gap-2">
+        <span class="text-base font-medium">{t("gateway.title")}</span>
+        <Show when={coreInfo()?.version}>
+          {(version) => <span class="text-xs text-white/35">{t("gateway.core", { version: version() })}</span>}
+        </Show>
+      </div>
       <p class="mt-1 text-sm text-white/45">{t("gateway.hint")}</p>
 
       <div class="mt-4 space-y-3">

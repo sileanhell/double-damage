@@ -1,14 +1,17 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { createResource, createRoot, createSignal } from "solid-js";
-import { type LaunchPlan, type LaunchSpec, modelInfo, planLaunch, runningUsage } from "./launch";
+import { api, coreInfo, inTauri, onCoreEvent, post, restartCore } from "./core";
+import { type FlashAttn, type KvType, type LaunchPlan, type LaunchSpec, modelInfo, planLaunch, runningUsage } from "./launch";
 import { localModels } from "./local-models";
+import { claudeStatus } from "./claude";
+import { devinStatus } from "./devin";
 import { hardware } from "./hardware";
 import { llamaDevices, llamaDevicesState, llamaServer } from "./providers";
 import { storage } from "./storage";
+import { invoke } from "@tauri-apps/api/core";
 
-// --- types (mirror src-tauri/src/gateway) -----------------------------------------
+// --- types (mirror core/src: catalog.rs, llama/runtime.rs, llama/files.rs) -------------
 
+/** The local API: where dd-core listens and the token other apps use with it. */
 export type GatewayInfo = { url: string | null; port: number; token: string; error: string | null };
 
 export type Reasoning = "none" | "toggle" | "effort" | "always";
@@ -60,39 +63,74 @@ export type Instance = {
   caps: unknown;
 };
 
-const inTauri = "__TAURI_INTERNALS__" in window;
+/** A running model as the core reports it: every launch setting is optional there. */
+type CoreInstance = Omit<Instance, "spec"> & {
+  spec: {
+    model: string;
+    file: string;
+    ctx: number | null;
+    device: string | null;
+    gpuLayers: number | null;
+    kv: string | null;
+    flashAttn: string | null;
+    threads: number | null;
+  };
+  loadedContext: number | null;
+};
+
+/** A GGUF file in the models folder (`GET /dd/llama/models`). */
+type ModelFile = {
+  file: string;
+  id: string;
+  size: number;
+  contextLength: number | null;
+  capabilities: Capabilities;
+  sampling: Sampling | null;
+};
+
+const isCpu = (device: string | null) => !device || device === "cpu" || device === "none";
+
+/** The core's instance, in the shape the planner works with (CPU = no device). */
+function fromCore(item: CoreInstance): Instance {
+  const spec = item.spec;
+  return {
+    ...item,
+    spec: {
+      file: spec.file,
+      ctx: spec.ctx ?? item.loadedContext ?? 0,
+      device: isCpu(spec.device) ? null : spec.device,
+      gpuLayers: spec.gpuLayers ?? (isCpu(spec.device) ? 0 : 999),
+      kv: (spec.kv ?? "f16") as KvType,
+      flashAttn: (spec.flashAttn ?? "auto") as FlashAttn,
+      threads: spec.threads,
+    },
+  };
+}
 
 // --- gateway endpoint ---------------------------------------------------------------
 
-const [gatewayInfo, setGatewayInfo] = createSignal<GatewayInfo>();
-/** Where the gateway listens and its token; undefined until the backend answers. */
-export { gatewayInfo };
+/** Where the gateway listens and its token; undefined until the core has started (or failed). */
+export const gatewayInfo = (): GatewayInfo | undefined => {
+  const info = coreInfo();
+  return info && { url: info.url, port: info.port, token: info.token, error: info.error };
+};
 
 export async function refreshGatewayInfo() {
-  if (!inTauri) return;
-  setGatewayInfo(await invoke<GatewayInfo>("gateway_info"));
+  // Pushed by the shell (`core-info` events); nothing to ask.
 }
 
-/** Restarts the endpoint on the port saved in settings (`GATEWAY_PORT_KEY`). */
+/** Restarts the core on the port saved in settings (`GATEWAY_PORT_KEY`). */
 export async function restartGateway() {
-  setGatewayInfo(await invoke<GatewayInfo>("gateway_restart"));
+  await restartCore();
 }
 
 export async function regenerateGatewayToken() {
-  setGatewayInfo(await invoke<GatewayInfo>("gateway_regenerate_token"));
+  const { token } = await post<{ token: string }>("/dd/token/regenerate");
+  await invoke("core_set_token", { token });
 }
 
 export const GATEWAY_PORT_KEY = "dd:gateway-port";
 export const DEFAULT_GATEWAY_PORT = 11488;
-
-// The listener starts in the background at launch; ask until it has settled.
-void (async () => {
-  for (let i = 0; i < 20; i++) {
-    await refreshGatewayInfo().catch(console.error);
-    if (gatewayInfo()?.url || gatewayInfo()?.error) return;
-    await new Promise((r) => setTimeout(r, 150));
-  }
-})();
 
 // --- running models -----------------------------------------------------------------
 
@@ -101,8 +139,8 @@ const [instances, setInstances] = createSignal<Instance[]>([]);
 export { instances };
 
 if (inTauri) {
-  void invoke<Instance[]>("llama_instances").then(setInstances).catch(console.error);
-  void listen<Instance[]>("llama-instances", (event) => setInstances(event.payload)).catch(console.error);
+  // The event stream starts with the full list and sends it again after every change.
+  onCoreEvent<CoreInstance[]>("instances", (list) => setInstances(list.map(fromCore)));
 }
 
 export const instance = (id: string) => instances().find((item) => item.id === id);
@@ -115,10 +153,40 @@ const instanceShape = () =>
     .map((item) => `${item.id}:${item.state.kind}`)
     .join("|");
 
+/** The core's catalog lists local models once they run; the models folder adds the rest. */
+async function buildCatalog(): Promise<Catalog> {
+  const [catalog, files] = await Promise.all([api<Catalog>("/dd/catalog"), api<ModelFile[]>("/dd/llama/models")]);
+  const llama = catalog.providers.find((provider) => provider.id === "llama-server");
+  if (llama) {
+    const listed = new Set(llama.models.map((model) => model.id));
+    for (const file of files) {
+      if (listed.has(file.id)) continue;
+      llama.models.push({
+        id: file.id,
+        name: file.id.replace(/^llama-server\//, ""),
+        provider: "llama-server",
+        state: "unloaded",
+        file: file.file,
+        size: file.size,
+        contextLength: file.contextLength,
+        loadedContext: null,
+        capabilities: file.capabilities,
+        sampling: file.sampling,
+        error: null,
+      });
+    }
+    llama.models.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  }
+  return catalog;
+}
+
 const [catalog, { refetch: refetchCatalog }] = createRoot(() => {
   const [resource, actions] = createResource(
-    () => (inTauri ? `${instanceShape()}#${localModels().length}#${llamaServer()?.installed}` : false),
-    () => invoke<Catalog>("gateway_catalog"),
+    () =>
+      inTauri && coreInfo()?.url
+        ? `${coreInfo()?.url}#${instanceShape()}#${localModels().length}#${llamaServer()?.installed}#${devinStatus()?.signedIn}:${devinStatus()?.models}#${claudeStatus()?.signedIn}:${claudeStatus()?.models}`
+        : false,
+    buildCatalog,
   );
   return [resource, actions] as const;
 });
@@ -256,11 +324,13 @@ async function load(model: CatalogModel): Promise<Instance> {
       }
     }
   }
-  return invoke<Instance>("llama_load", { spec: plan.spec });
+  // The core leaves out what isn't given; CPU has to be asked for.
+  const spec = { ...plan.spec, model: plan.spec.file, device: plan.spec.device ?? "cpu" };
+  return fromCore(await post<CoreInstance>("/dd/llama/load", spec));
 }
 
 export async function unloadModel(id: string) {
-  await invoke("llama_unload", { id });
+  await post("/dd/llama/unload", { id });
 }
 
 // --- idle unloading -----------------------------------------------------------------

@@ -1,12 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
 import { createSignal } from "solid-js";
+import { post } from "./core";
 import { hardware } from "./hardware";
 import { modelKey, modelSetSize } from "./local-models";
 import { modelDevice } from "./model-device";
 import { llamaDevices } from "./providers";
 import { storage } from "./storage";
 
-/** What the GGUF header says about a model (see `gguf.rs`). */
+/** What the GGUF header says about a model (dd-core's `POST /dd/llama/inspect`, see `core/src/gguf.rs`). */
 export type ModelInfo = {
   architecture: string | null;
   contextLength: number | null;
@@ -31,7 +31,7 @@ export function modelInfo(name: string): Promise<ModelInfo> {
   const file = name.replace(SHARD, "-00001-of-$1.gguf");
   let info = infoCache.get(file);
   if (!info) {
-    info = invoke<ModelInfo>("model_info", { name: file });
+    info = post<{ info: ModelInfo }>("/dd/llama/inspect", { model: file }).then((answer) => answer.info);
     info.catch(() => infoCache.delete(file));
     infoCache.set(file, info);
   }

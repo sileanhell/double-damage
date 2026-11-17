@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createSignal } from "solid-js";
+import { onCoreEvent, post } from "./core";
 
 /** Long-running backend job (install, download, import) as reported by `task-progress` events. */
 export type Task = {
@@ -33,22 +34,27 @@ const drop = (id: string) =>
 /** Weight of the newest sample in the speed average; lower is steadier. */
 const SPEED_SMOOTHING = 0.25;
 
-void listen<Task>("task-progress", (event) => {
-  const previous = tasks()[event.payload.id];
+function progress(payload: Task) {
+  const previous = tasks()[payload.id];
   // Ignore late events from a task that has already settled.
   if (!previous) return;
   const now = performance.now();
   let speed = previous.speed;
-  if (previous.at !== undefined && now > previous.at && event.payload.received >= previous.received) {
-    const sample = ((event.payload.received - previous.received) * 1000) / (now - previous.at);
+  if (previous.at !== undefined && now > previous.at && payload.received >= previous.received) {
+    const sample = ((payload.received - previous.received) * 1000) / (now - previous.at);
     speed = speed === undefined ? sample : speed + SPEED_SMOOTHING * (sample - speed);
   }
   // A download keeps the name it was started with (a split model is named after the whole set).
-  const label = previous.kind === "download" && previous.label ? previous.label : event.payload.label;
-  put({ ...event.payload, label, speed, at: now });
-}).catch(() => {
+  const label = previous.kind === "download" && previous.label ? previous.label : payload.label;
+  put({ ...payload, label, speed, at: now });
+}
+
+// The desktop shell's own tasks (model downloads, imports, bash)…
+void listen<Task>("task-progress", (event) => progress(event.payload)).catch(() => {
   // Not running inside Tauri (plain web dev server).
 });
+// …and the core's (llama-server installs, model downloads it does for `load`).
+onCoreEvent<Task & { done: boolean; error: string | null }>("task", ({ done: _, error: __, ...payload }) => progress(payload));
 
 /** The backend's way of saying a task stopped because the user cancelled it. */
 export const isCancelled = (error: unknown) => error === "cancelled";
@@ -64,5 +70,7 @@ export async function runTask<T>(seed: Pick<Task, "id" | "kind" | "label">, run:
 }
 
 export function cancelTask(id: string) {
+  // The id belongs to the shell or to the core; telling both is harmless.
   void invoke("task_cancel", { id }).catch(console.error);
+  void post(`/dd/tasks/${encodeURIComponent(id)}/cancel`).catch(() => {});
 }

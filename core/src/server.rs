@@ -1,9 +1,8 @@
-//! The local HTTP gateway: OpenAI- and Anthropic-compatible endpoints on 127.0.0.1 that route
-//! each request to the provider serving its `model`. Every request needs the local API token
-//! (`Authorization: Bearer …` or `x-api-key: …`), so other programs and web pages can't use the
-//! gateway without being given it.
+//! The HTTP endpoint: OpenAI- and Anthropic-compatible model routes on top of every provider,
+//! and the `/dd/*` management routes (see `admin`). Every request but `/health` needs the API
+//! token (`Authorization: Bearer …` or `x-api-key: …`).
 
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     Json, Router,
@@ -16,11 +15,12 @@ use axum::{
 };
 use futures_util::StreamExt;
 use serde_json::json;
-use tokio::sync::oneshot;
 
-use super::{
-    catalog,
-    llama::{self, Llama},
+use crate::{
+    Core,
+    catalog::remote_caps,
+    llama,
+    providers::{claude, devin},
 };
 
 /// Endpoints passed through to the model's server.
@@ -28,77 +28,57 @@ const PROXIED: [&str; 5] =
     ["/v1/messages", "/v1/messages/count_tokens", "/v1/chat/completions", "/v1/completions", "/v1/embeddings"];
 
 /// Providers the gateway knows (scoped paths for anything else are 404).
-const PROVIDERS: [&str; 1] = [llama::PROVIDER];
+pub const PROVIDERS: [&str; 3] = [llama::PROVIDER, devin::PROVIDER, claude::PROVIDER];
 
-/// Origins of the app's own page (release build, dev server); only these get CORS headers.
+/// Origins of the desktop app's page (release build, dev server); only these get CORS headers.
 const APP_ORIGINS: [&str; 3] = ["http://tauri.localhost", "tauri://localhost", "http://localhost:1420"];
 
 #[derive(Clone)]
-struct Ctx {
-    token: Arc<str>,
-    llama: Llama,
-    catalog: Arc<catalog::Source>,
-    client: reqwest::Client,
+pub struct Ctx {
+    pub core: Core,
+    /// Loopback client for llama-server (never through a proxy).
+    pub client: reqwest::Client,
 }
 
-/// A running server; dropping it (or calling `stop`) shuts it down.
-pub struct Server {
-    pub port: u16,
-    stop: Option<oneshot::Sender<()>>,
+/// Binds `host:port` (port 0 picks a free one). Returns the listener and its real address.
+pub async fn bind(host: &str, port: u16) -> Result<(tokio::net::TcpListener, SocketAddr), String> {
+    let listener =
+        tokio::net::TcpListener::bind((host, port)).await.map_err(|e| format!("can't listen on {host}:{port}: {e}"))?;
+    let addr = listener.local_addr().map_err(|e| e.to_string())?;
+    Ok((listener, addr))
 }
 
-impl Server {
-    pub fn stop(mut self) {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
-    }
-}
-
-pub async fn start(port: u16, token: String, llama: Llama, catalog: Arc<catalog::Source>) -> Result<Server, String> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .map_err(|e| format!("can't listen on 127.0.0.1:{port}: {e}"))?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+pub fn router(core: Core) -> Result<Router, String> {
     let client = reqwest::Client::builder().no_proxy().build().map_err(|e| e.to_string())?;
-    let ctx = Ctx { token: token.into(), llama, catalog, client };
+    let ctx = Ctx { core, client };
 
-    // Every endpoint twice: for all providers, and under `/{provider}` for just one of them.
+    // Every model endpoint twice: for all providers, and under `/{provider}` for just one.
     let mut api = Router::new()
         .route("/v1/models", get(models))
         .route("/{provider}/v1/models", get(models_scoped))
-        .route("/dd/catalog", get(catalog_handler));
+        .merge(crate::admin::routes());
     for path in PROXIED {
         api = api.route(path, post(proxy)).route(&format!("/{{provider}}{path}"), post(proxy_scoped));
     }
     let api = api.route_layer(middleware::from_fn_with_state(ctx.clone(), auth));
-    let app = Router::new()
+    Ok(Router::new()
         .route("/health", get(|| async { "ok" }))
         .merge(api)
         .layer(middleware::from_fn(cors))
-        .with_state(ctx);
+        .with_state(ctx))
+}
 
-    let (stop, stopped) = oneshot::channel::<()>();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = stopped.await;
-            })
-            .await;
-    });
-    Ok(Server { port, stop: Some(stop) })
+/// Serves until `stop` resolves.
+pub async fn serve(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    stop: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<(), String> {
+    axum::serve(listener, app).with_graceful_shutdown(stop).await.map_err(|e| e.to_string())
 }
 
 /// Errors in a shape both OpenAI and Anthropic clients understand well enough.
-fn error(status: StatusCode, kind: &str, message: impl Into<String>) -> Response {
+pub fn error(status: StatusCode, kind: &str, message: impl Into<String>) -> Response {
     let message = message.into();
     (
         status,
@@ -121,7 +101,7 @@ async fn cors(request: Request, next: Next) -> Response {
     if let Some(origin) = allowed {
         let headers = response.headers_mut();
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, OPTIONS"));
+        headers.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, DELETE, OPTIONS"));
         headers.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("*"));
         headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("600"));
         headers.insert(header::VARY, HeaderValue::from_static("Origin"));
@@ -144,53 +124,82 @@ fn same(a: &str, b: &str) -> bool {
 
 async fn auth(State(ctx): State<Ctx>, request: Request, next: Next) -> Response {
     match presented_token(request.headers()) {
-        Some(token) if same(token.trim(), &ctx.token) => next.run(request).await,
+        Some(token) if same(token.trim(), &ctx.core.token()) => next.run(request).await,
         _ => error(StatusCode::UNAUTHORIZED, "authentication_error", "invalid or missing API token"),
     }
 }
 
-/// Loaded models, in a shape that satisfies both the OpenAI and the Anthropic model list.
-fn model_list(ctx: &Ctx, provider: Option<&str>) -> Response {
-    let data: Vec<_> = ctx
-        .llama
-        .list()
-        .into_iter()
-        .filter(|i| i.state == llama::State::Ready)
-        .filter(|_| provider.is_none_or(|p| p == llama::PROVIDER))
-        .map(|i| {
+/// Ready models, in a shape that satisfies both the OpenAI and the Anthropic model list, plus
+/// what each can do (`capabilities`: tools, reasoning and its levels).
+fn model_list(core: &Core, provider: Option<&str>) -> Response {
+    let mut data: Vec<_> = Vec::new();
+    if provider.is_none_or(|p| p == llama::PROVIDER) {
+        data.extend(core.llama.ready_all().into_iter().map(|instance| {
+            let info = instance.info();
             json!({
-                "id": i.id,
+                "id": info.id,
                 "object": "model",
                 "type": "model",
                 "owned_by": llama::PROVIDER,
                 "provider": llama::PROVIDER,
-                "display_name": i.id,
-                "created": i.started_at / 1000,
-                "created_at": i.started_at / 1000,
-                "context_length": i.spec.ctx,
+                "display_name": info.id.strip_prefix(&format!("{}/", llama::PROVIDER)).unwrap_or(&info.id),
+                "created": info.started_at / 1000,
+                "created_at": info.started_at / 1000,
+                "context_length": info.loaded_context,
+                "max_context_length": info.context_length,
+                "capabilities": info.capabilities,
             })
-        })
-        .collect();
-    Json(json!({ "object": "list", "data": data, "has_more": false })).into_response()
+        }));
+    }
+    // Remote models are always ready once signed in.
+    if core.devin.creds().is_some() && provider.is_none_or(|p| p == devin::PROVIDER) {
+        data.extend(core.devin.models().into_iter().map(|model| {
+            json!({
+                "id": format!("{}/{}", devin::PROVIDER, model.uid),
+                "object": "model",
+                "type": "model",
+                "owned_by": devin::PROVIDER,
+                "provider": devin::PROVIDER,
+                "display_name": model.label,
+                "created": 0,
+                "created_at": 0,
+                "context_length": model.context,
+                "max_output_tokens": model.max_output,
+                "capabilities": remote_caps(devin::PROVIDER),
+            })
+        }));
+    }
+    if core.claude.creds().is_some() && provider.is_none_or(|p| p == claude::PROVIDER) {
+        data.extend(core.claude.models().into_iter().map(|model| {
+            json!({
+                "id": format!("{}/{}", claude::PROVIDER, model.id),
+                "object": "model",
+                "type": "model",
+                "owned_by": claude::PROVIDER,
+                "provider": claude::PROVIDER,
+                "display_name": model.label,
+                "created": 0,
+                "created_at": 0,
+                "context_length": model.context,
+                "max_output_tokens": model.max_output,
+                "capabilities": remote_caps(claude::PROVIDER),
+            })
+        }));
+    }
+    let first = data.first().and_then(|m| m["id"].as_str()).map(str::to_owned);
+    let last = data.last().and_then(|m| m["id"].as_str()).map(str::to_owned);
+    Json(json!({ "object": "list", "data": data, "has_more": false, "first_id": first, "last_id": last })).into_response()
 }
 
 async fn models(State(ctx): State<Ctx>) -> Response {
-    model_list(&ctx, None)
+    model_list(&ctx.core, None)
 }
 
 async fn models_scoped(State(ctx): State<Ctx>, Path(provider): Path<String>) -> Response {
     if !PROVIDERS.contains(&provider.as_str()) {
         return error(StatusCode::NOT_FOUND, "not_found_error", format!("unknown provider {provider:?}"));
     }
-    model_list(&ctx, Some(&provider))
-}
-
-async fn catalog_handler(State(ctx): State<Ctx>) -> Response {
-    let source = ctx.catalog.clone();
-    match tokio::task::spawn_blocking(move || source.build()).await {
-        Ok(catalog) => Json(catalog).into_response(),
-        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, "api_error", e.to_string()),
-    }
+    model_list(&ctx.core, Some(&provider))
 }
 
 async fn proxy(State(ctx): State<Ctx>, request: Request) -> Response {
@@ -233,7 +242,21 @@ async fn route(ctx: Ctx, provider: Option<String>, path: String, request: Reques
     let Some(id) = resolve_model(&model, provider.as_deref()) else {
         return error(StatusCode::NOT_FOUND, "not_found_error", format!("model {model:?} is not served here"));
     };
-    let Some(instance) = ctx.llama.ready(&id) else {
+    if id.starts_with(&format!("{}/", devin::PROVIDER)) {
+        // The remote provider only speaks the Messages API.
+        if path != "/v1/messages" {
+            return error(StatusCode::NOT_FOUND, "not_found_error", format!("{path} is not served for {id:?}"));
+        }
+        return devin::chat(&ctx.core.devin, &id, &json).await;
+    }
+    if id.starts_with(&format!("{}/", claude::PROVIDER)) {
+        // Claude speaks the Messages API natively, token counting included.
+        if path != "/v1/messages" && path != "/v1/messages/count_tokens" {
+            return error(StatusCode::NOT_FOUND, "not_found_error", format!("{path} is not served for {id:?}"));
+        }
+        return claude::chat(&ctx.core.claude, &path, &id, &json).await;
+    }
+    let Some(instance) = ctx.core.llama.ready(&id) else {
         return error(StatusCode::NOT_FOUND, "not_found_error", format!("model {id:?} is not loaded"));
     };
     let body = if adapt_for_llama(&mut json) { Bytes::from(json.to_string()) } else { body };
@@ -279,8 +302,8 @@ fn adapt_for_llama(body: &mut serde_json::Value) -> bool {
 
 /// Sends the request on to the model's server and streams the answer back. When the client
 /// goes away the stream is dropped, which closes the upstream connection and stops generation.
-async fn forward(ctx: &Ctx, instance: Arc<llama::Instance>, path: &str, body: Bytes) -> Response {
-    let busy = ctx.llama.busy(instance.clone());
+async fn forward(ctx: &Ctx, instance: Arc<llama::runtime::Instance>, path: &str, body: Bytes) -> Response {
+    let busy = ctx.core.llama.busy(instance.clone());
     let upstream = ctx
         .client
         .post(format!("http://127.0.0.1:{}{path}", instance.port))
@@ -309,7 +332,6 @@ async fn forward(ctx: &Ctx, instance: Arc<llama::Instance>, path: &str, body: By
     response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     response
 }
-
 
 #[cfg(test)]
 mod tests {

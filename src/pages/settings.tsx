@@ -1,11 +1,15 @@
 import { Tabs } from "@kobalte/core/tabs";
 import { For, type JSX } from "solid-js";
+import { AgentSettings } from "../components/agent-settings";
 import { BackgroundSettings } from "../components/background-settings";
 import { DataDirSettings } from "../components/data-dir-settings";
+import { BashSettings } from "../components/bash-settings";
 import { Dropdown } from "../components/dropdown";
+import { GatewaySettings } from "../components/gateway-settings";
 import { LlamaServerSettings } from "../components/llama-server-settings";
 import { LocalModelsSettings } from "../components/local-models-settings";
 import { Toggle } from "../components/toggle";
+import { setThinkingDisplay, type ThinkingDisplay, thinkingDisplay } from "../lib/chat-settings";
 import { setWidgetsEnabled, widgetsEnabled } from "../lib/features";
 import {
   LOCALE_NAMES,
@@ -60,8 +64,27 @@ function WidgetsToggle() {
   );
 }
 
-function Placeholder() {
-  return <p class="text-sm text-white/45">{t("settings.empty")}</p>;
+function ThinkingSelect() {
+  const options = () => [
+    { value: "collapsed" as ThinkingDisplay, label: t("settings.thinkingCollapsed") },
+    { value: "expanded" as ThinkingDisplay, label: t("settings.thinkingExpanded") },
+  ];
+  return (
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <div class="text-base font-medium">{t("settings.thinking")}</div>
+        <div class="mt-1 text-sm text-white/45">{t("settings.thinkingHint")}</div>
+      </div>
+      <Dropdown
+        variant="outline"
+        placement="bottom-start"
+        title={t("settings.thinking")}
+        value={thinkingDisplay()}
+        options={options()}
+        onChange={setThinkingDisplay}
+      />
+    </div>
+  );
 }
 
 const TABS: { id: string; label: MessageKey; content: () => JSX.Element }[] = [
@@ -69,12 +92,29 @@ const TABS: { id: string; label: MessageKey; content: () => JSX.Element }[] = [
     id: "general",
     label: "settings.tab.general",
     content: () => (
+      <>
+        <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <DataDirSettings />
+        </div>
+        <Section title={t("settings.chat")}>
+          <ThinkingSelect />
+        </Section>
+        <div class="mt-8 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <GatewaySettings />
+        </div>
+        <AgentSettings />
+      </>
+    ),
+  },
+  {
+    id: "modules",
+    label: "settings.tab.modules",
+    content: () => (
       <div class="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-        <DataDirSettings />
+        <BashSettings />
       </div>
     ),
   },
-  { id: "modules", label: "settings.tab.modules", content: () => <Placeholder /> },
   {
     id: "interface",
     label: "settings.tab.interface",

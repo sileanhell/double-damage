@@ -33,7 +33,17 @@ const STALE_FILE: &str = "stale-webviews.json";
 
 pub const WEBVIEW_DIR: &str = "webview";
 /// What a switch carries over; the exe and unrelated files next to it are never touched.
-const ENTRIES: [&str; 4] = [crate::store::FILE, crate::background::DIR, "models", "llama-server"];
+/// The chat database (SQLite in WAL mode: the main file plus its write-ahead log and index).
+const SESSIONS_DB: [&str; 3] = ["sessions.db", "sessions.db-wal", "sessions.db-shm"];
+/// Absolute path of the chat database, for the SQL plugin (the page can't build it reliably
+/// from the display path, e.g. for UNC folders).
+#[tauri::command]
+pub fn sessions_db_path(dir: State<'_, DataDir>) -> String {
+    dir.get().join(SESSIONS_DB[0]).to_string_lossy().into_owned()
+}
+
+/// Everything else that moves (the chat database goes separately, see `move_sessions_db`).
+const ENTRIES: [&str; 5] = [crate::store::FILE, crate::background::DIR, "models", "llama-server", "bash"];
 
 /// Current data folder (managed state). Changes at runtime when the user picks another one.
 pub struct DataDir(RwLock<PathBuf>);
@@ -156,11 +166,36 @@ const MOVE_RETRY: Duration = Duration::from_millis(200);
 /// Windows `ERROR_NOT_SAME_DEVICE`: rename can't cross volumes.
 const NOT_SAME_DEVICE: i32 = 17;
 
+/// Moves the chat database as one unit: the main file first, and only once it's in place the
+/// target's old log files are dropped (SQLite would replay them onto the wrong database) and
+/// ours follow. If the main file can't move, nothing in the target is touched.
+fn move_sessions_db(from: &Path, to: &Path) {
+    let main = from.join(SESSIONS_DB[0]);
+    if !main.exists() {
+        return;
+    }
+    if let Err(error) = move_entry(&main, &to.join(SESSIONS_DB[0]), true) {
+        eprintln!("failed to move {}: {error}", main.display());
+        return;
+    }
+    for file in &SESSIONS_DB[1..] {
+        let _ = fs::remove_file(to.join(file));
+        let src = from.join(file);
+        if src.exists()
+            && let Err(error) = move_entry(&src, &to.join(file), true)
+        {
+            eprintln!("failed to move {}: {error}", src.display());
+        }
+    }
+}
+
 fn move_entries(from: &Path, to: &Path) {
+    move_sessions_db(from, to);
     for entry in ENTRIES {
         let src = from.join(entry);
+        let overwrite = entry == crate::store::FILE;
         if src.exists()
-            && let Err(error) = move_entry(&src, &to.join(entry), entry == crate::store::FILE)
+            && let Err(error) = move_entry(&src, &to.join(entry), overwrite)
         {
             eprintln!("failed to move {}: {error}", src.display());
         }

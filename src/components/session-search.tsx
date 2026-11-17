@@ -2,39 +2,15 @@ import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { TextField } from "@kobalte/core/text-field";
 import { useNavigate } from "@solidjs/router";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createResource, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { locale, t } from "../lib/i18n";
-import { openSession, type Session, sessions, sessionTitle } from "../lib/sessions";
+import { openSession, type SearchHit as Hit, type Snippet, searchSessions, sessionTitle } from "../lib/sessions";
 import { SearchIcon } from "./icons";
 
-type Snippet = { text: string; at: number };
-type Hit = { session: Session; snippet?: Snippet };
+/** Typing pause before a search runs. */
+const DEBOUNCE = 150;
 
 const flatten = (text: string) => text.replace(/\s+/g, " ").trim();
-
-/** Matches by title or by any message text; content hits carry a window of text around the match. */
-function search(list: Session[], query: string): Hit[] {
-  const needle = flatten(query).toLowerCase();
-  const hits: Hit[] = [];
-  for (const session of list) {
-    const texts = (session.messages ?? []).map((message) => flatten(message.text));
-    if (!needle) {
-      hits.push({ session, snippet: texts[0] ? { text: texts[0], at: 0 } : undefined });
-      continue;
-    }
-    const titleHit = sessionTitle(session).toLowerCase().includes(needle);
-    let snippet: Snippet | undefined;
-    for (const text of texts) {
-      const at = text.toLowerCase().indexOf(needle);
-      if (at >= 0) {
-        snippet = { text, at };
-        break;
-      }
-    }
-    if (titleHit || snippet) hits.push({ session, snippet });
-  }
-  return hits;
-}
 
 /** Renders `text` with the first case-insensitive occurrence of `needle` highlighted. */
 function Highlight(props: { text: string; needle: string }) {
@@ -78,16 +54,32 @@ export function SessionSearch() {
   const [active, setActive] = createSignal(0);
   const items: HTMLButtonElement[] = [];
 
-  const hits = createMemo(() => search(sessions(), query()));
+  // The query actually searched for; follows `query` once typing pauses (at once when opening).
+  const [searched, setSearched] = createSignal<string | null>(null);
+  createEffect(
+    on(query, (next) => {
+      if (!open()) return;
+      const timer = setTimeout(() => setSearched(next), DEBOUNCE);
+      onCleanup(() => clearTimeout(timer));
+    }),
+  );
+  // Only the latest search lands; earlier results stay up while it runs.
+  const [results] = createResource(
+    () => (open() ? { query: searched() ?? "" } : false),
+    ({ query }) => searchSessions(query),
+  );
+  const hits = (): Hit[] => (open() ? (results.latest ?? []) : []);
+  // Highlight what the shown results were found with, not what is being typed.
+  const needle = () => searched() ?? "";
 
-  createEffect(() => {
-    query();
-    setActive(0);
-  });
+  createEffect(on(() => results.latest, () => setActive(0)));
   createEffect(() => items[active()]?.scrollIntoView({ block: "nearest" }));
 
   const onOpenChange = (next: boolean) => {
-    if (next) setQuery("");
+    if (next) {
+      setQuery("");
+      setSearched("");
+    }
     setOpen(next);
   };
 
@@ -145,7 +137,7 @@ export function SessionSearch() {
                 when={hits().length > 0}
                 fallback={
                   <p class="px-3 py-6 text-center text-sm text-white/40">
-                    {t(query().trim() ? "search.nothing" : "sidebar.empty")}
+                    {t(needle().trim() ? "search.nothing" : "sidebar.empty")}
                   </p>
                 }
               >
@@ -160,14 +152,14 @@ export function SessionSearch() {
                     >
                       <span class="flex items-baseline gap-3">
                         <span class="min-w-0 flex-1 truncate text-sm text-white/90">
-                          <Highlight text={sessionTitle(hit.session)} needle={query()} />
+                          <Highlight text={sessionTitle(hit.session)} needle={needle()} />
                         </span>
-                        <span class="shrink-0 text-xs text-white/35">{formatDate(hit.session.createdAt)}</span>
+                        <span class="shrink-0 text-xs text-white/35">{formatDate(hit.session.updatedAt)}</span>
                       </span>
                       <Show when={hit.snippet}>
                         {(snippet) => (
                           <span class="mt-1 block truncate text-xs text-white/45">
-                            <Highlight text={excerpt(snippet())} needle={query()} />
+                            <Highlight text={excerpt(snippet())} needle={needle()} />
                           </span>
                         )}
                       </Show>

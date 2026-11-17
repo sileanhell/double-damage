@@ -12,9 +12,11 @@ import {
 } from "../lib/widgets";
 import { locale, type MessageKey, t } from "../lib/i18n";
 import { widgetsWidth } from "../lib/layout";
-import { ChartIcon, ChevronRightIcon, CloseIcon, GripIcon, LayersIcon, PlusCircleIcon, TrashIcon } from "./icons";
+import { ChartIcon, ChevronRightIcon, CloseIcon, CpuIcon, GripIcon, LayersIcon, PlusCircleIcon, TrashIcon } from "./icons";
+import { ModelsWidget } from "./models-widget";
 
 const WIDGET_INFO: Record<WidgetId, { title: MessageKey; icon: (props: { class?: string }) => JSX.Element }> = {
+  models: { title: "widgets.models", icon: CpuIcon },
   usage: { title: "widgets.usage", icon: ChartIcon },
   context: { title: "widgets.context", icon: LayersIcon },
 };
@@ -88,6 +90,7 @@ function ContextUsage() {
 }
 
 const WIDGET_BODY: Record<WidgetId, () => ReturnType<typeof UsageLimits>> = {
+  models: ModelsWidget,
   usage: UsageLimits,
   context: ContextUsage,
 };

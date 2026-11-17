@@ -4,7 +4,18 @@ import { Popover } from "@kobalte/core/popover";
 import { Slider } from "@kobalte/core/slider";
 import { createSignal, For, onCleanup, Show } from "solid-js";
 import { t } from "../lib/i18n";
-import { effort, effortKey, MODELS, type ModelInfo, modelInfo, setEffort, setModel } from "../lib/models";
+import type { CatalogModel } from "../lib/gateway";
+import { catalog } from "../lib/gateway";
+import {
+  currentModel,
+  type EffortLevel,
+  effort,
+  effortLabel,
+  effortLevels,
+  modelsLoading,
+  setEffort,
+  setModel,
+} from "../lib/models";
 import { CheckIcon, ChevronDownIcon, PenSquareIcon } from "./icons";
 
 const TRIGGER =
@@ -15,12 +26,13 @@ export function ModelPicker() {
   const [open, setOpen] = createSignal(false);
   const [view, setView] = createSignal<"effort" | "models">("effort");
 
-  const levels = () => modelInfo().efforts;
+  const levels = () => effortLevels(currentModel());
   const effortIndex = () => Math.max(0, levels().findIndex((level) => level.value === effort()));
-  const effortLabel = () => {
+  const currentEffort = () => {
     const level = levels()[effortIndex()];
-    return level && t(effortKey(level));
+    return level && effortLabel(level);
   };
+  const modelName = () => currentModel()?.name ?? (modelsLoading() ? t("common.loading") : t("model.none"));
 
   return (
     <Popover
@@ -33,9 +45,9 @@ export function ModelPicker() {
       gutter={8}
     >
       <Popover.Trigger title={t("model.trigger")} class={TRIGGER}>
-        <span class="max-w-40 truncate">{modelInfo().label}</span>
-        <Show when={effortLabel()}>
-          <span class="text-white/45">{effortLabel()}</span>
+        <span class="max-w-40 truncate">{modelName()}</span>
+        <Show when={currentEffort()}>
+          <span class="text-white/45">{currentEffort()}</span>
         </Show>
         <ChevronDownIcon class="size-3 transition-transform in-data-expanded:rotate-180" />
       </Popover.Trigger>
@@ -59,16 +71,16 @@ export function ModelPicker() {
                 class="flex max-w-full items-center gap-1.5 rounded-md px-1.5 text-[15px] font-medium text-white/90 outline-none transition-colors hover:text-white focus-visible:bg-white/10"
                 onClick={() => setView("models")}
               >
-                <span class="truncate">{modelInfo().label}</span>
+                <span class="truncate">{modelName()}</span>
                 <PenSquareIcon class="size-3.5 shrink-0 text-white/50" />
               </Button>
-              <Show when={effortLabel()} fallback={<span class="text-[13px] text-white/45">{t("model.noReasoning")}</span>}>
-                <span class="text-[13px] text-accent">{effortLabel()}</span>
+              <Show when={currentEffort()} fallback={<span class="text-[13px] text-white/45">{t("model.noReasoning")}</span>}>
+                <span class="text-[13px] text-accent">{currentEffort()}</span>
               </Show>
             </div>
 
             <Show when={levels().length > 1}>
-              <EffortSlider info={modelInfo()} index={effortIndex()} />
+              <EffortSlider levels={levels()} index={effortIndex()} />
             </Show>
           </Show>
         </Popover.Content>
@@ -106,8 +118,8 @@ function deflateKeyframes(from: number): Keyframe[] {
   });
 }
 
-function EffortSlider(props: { info: ModelInfo; index: number }) {
-  const max = () => props.info.efforts.length - 1;
+function EffortSlider(props: { levels: EffortLevel[]; index: number }) {
+  const max = () => props.levels.length - 1;
   // Holding the thumb for FILL_AFTER makes it slowly grow over the whole app;
   // releasing lets it deflate back to normal like a balloon.
   // Both stages are Web Animations on the same element; a CSS transition here would fight the
@@ -164,12 +176,12 @@ function EffortSlider(props: { info: ModelInfo; index: number }) {
       step={1}
       value={[props.index]}
       onChange={([index]) => {
-        const level = props.info.efforts[index];
+        const level = props.levels[index];
         if (level) setEffort(level.value);
       }}
       getValueLabel={({ values }) => {
-        const level = props.info.efforts[values[0]];
-        return level ? t(effortKey(level)) : "";
+        const level = props.levels[values[0]];
+        return level ? effortLabel(level) : "";
       }}
     >
       <Slider.Label class="sr-only">{t("model.effortLabel")}</Slider.Label>
@@ -183,7 +195,7 @@ function EffortSlider(props: { info: ModelInfo; index: number }) {
         onPointerCancel={release}
       >
         <Slider.Fill class="absolute inset-y-0 -mx-3 rounded-full bg-accent" />
-        <For each={props.info.efforts}>
+        <For each={props.levels}>
           {(_, i) => (
             <span
               aria-hidden="true"
@@ -207,15 +219,33 @@ function EffortSlider(props: { info: ModelInfo; index: number }) {
   );
 }
 
+type Group = { name: string; models: CatalogModel[] };
+
+const STATE_DOT: Record<CatalogModel["state"], string> = {
+  loaded: "bg-emerald-400",
+  loading: "animate-pulse bg-amber-400",
+  failed: "bg-red-400",
+  unloaded: "bg-white/20",
+};
+
+/** Models grouped by provider; a dot shows whether a local model is in memory. */
 function ModelList(props: { onSelect: (id: string) => void }) {
+  const groups = (): Group[] =>
+    (catalog()?.providers ?? [])
+      .filter((provider) => provider.models.length > 0)
+      .map((provider) => ({ name: provider.name, models: provider.models }));
+
   return (
-    <div>
-      <div class="px-2.5 pt-1 pb-1 text-xs text-white/40">{t("model.heading")}</div>
-      <Listbox<ModelInfo>
-        options={[...MODELS]}
-        optionValue="value"
-        optionTextValue="label"
-        value={[modelInfo().value]}
+    <Show
+      when={groups().length > 0}
+      fallback={<p class="px-2.5 py-2 text-sm text-white/45">{t("model.empty")}</p>}
+    >
+      <Listbox<CatalogModel, Group>
+        options={groups()}
+        optionValue="id"
+        optionTextValue="name"
+        optionGroupChildren="models"
+        value={currentModel() ? [currentModel()!.id] : []}
         onChange={(keys) => {
           const [id] = keys;
           if (id) props.onSelect(id);
@@ -223,20 +253,27 @@ function ModelList(props: { onSelect: (id: string) => void }) {
         disallowEmptySelection
         shouldFocusOnHover
         autoFocus="first"
-        class="outline-none"
+        class="thin-scroll max-h-80 overflow-y-auto outline-none"
+        renderSection={(section) => (
+          <Listbox.Section class="px-2.5 pt-2 pb-1 text-xs text-white/40 first:pt-1">
+            {section.rawValue.name}
+          </Listbox.Section>
+        )}
         renderItem={(item) => (
           <Listbox.Item
             item={item}
-            class="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-2.5 py-1.5 text-sm text-white/80 outline-none transition-colors data-highlighted:bg-white/10 data-highlighted:text-white"
-            onClick={() => props.onSelect(item.rawValue.value)}
+            title={item.rawValue.state === "failed" ? (item.rawValue.error ?? undefined) : undefined}
+            class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-white/80 outline-none transition-colors data-highlighted:bg-white/10 data-highlighted:text-white"
+            onClick={() => props.onSelect(item.rawValue.id)}
           >
-            <Listbox.ItemLabel class="truncate">{item.rawValue.label}</Listbox.ItemLabel>
+            <span class={`size-1.5 shrink-0 rounded-full ${STATE_DOT[item.rawValue.state]}`} />
+            <Listbox.ItemLabel class="min-w-0 flex-1 truncate">{item.rawValue.name}</Listbox.ItemLabel>
             <Listbox.ItemIndicator>
               <CheckIcon class="size-4 text-accent" />
             </Listbox.ItemIndicator>
           </Listbox.Item>
         )}
       />
-    </div>
+    </Show>
   );
 }

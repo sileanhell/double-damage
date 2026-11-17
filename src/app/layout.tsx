@@ -10,6 +10,7 @@ import {
   WIDGETS_DEFAULT,
   widgetsWidth,
 } from "../lib/layout";
+import { MemoryDialog } from "../components/memory-dialog";
 import { PanelResizer } from "../components/panel-resizer";
 import { Sidebar } from "../components/sidebar";
 import { discardDraftsExcept } from "../lib/sessions";
@@ -52,6 +53,8 @@ export function AppLayout(props: RouteSectionProps) {
         <PanelResizer side="right" width={widgetsWidth} setWidth={setWidgetsWidth} defaultWidth={WIDGETS_DEFAULT} />
         <WidgetsPanel onClose={() => setWidgetsPanelOpen(false)} />
       </Show>
+
+      <MemoryDialog />
     </div>
   );
 }

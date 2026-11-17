@@ -1,12 +1,13 @@
 import { storage } from "./storage";
 import { createSignal } from "solid-js";
 
-export type WidgetId = "usage" | "context";
+export type WidgetId = "models" | "usage" | "context";
 
-export const WIDGET_IDS: WidgetId[] = ["usage", "context"];
+export const WIDGET_IDS: WidgetId[] = ["models", "usage", "context"];
 
 const KEY = "dd:widgets";
 const PANEL_KEY = "dd:widgets-panel";
+const MODELS_ADDED = "dd:widgets-models-added";
 
 const [widgetsPanelOpen, setWidgetsPanelOpenSignal] = createSignal(storage.getItem(PANEL_KEY) === "1");
 export { widgetsPanelOpen };
@@ -19,7 +20,15 @@ export function setWidgetsPanelOpen(open: boolean) {
 function load(): WidgetId[] {
   try {
     const parsed = JSON.parse(storage.getItem(KEY) ?? "null");
-    if (Array.isArray(parsed)) return parsed.filter((id): id is WidgetId => WIDGET_IDS.includes(id as WidgetId));
+    if (Array.isArray(parsed)) {
+      const ids = parsed.filter((id): id is WidgetId => WIDGET_IDS.includes(id as WidgetId));
+      // Widgets added in later versions show up once for people with a saved layout.
+      if (storage.getItem(MODELS_ADDED) === null) {
+        storage.setItem(MODELS_ADDED, "1");
+        if (!ids.includes("models")) ids.unshift("models");
+      }
+      return ids;
+    }
   } catch {
     // fall through to the default layout
   }

@@ -54,6 +54,19 @@ export const ArrowUpIcon = (props: IconProps) => (
   </Icon>
 );
 
+export const CpuIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <rect x="6" y="6" width="12" height="12" rx="2" />
+    <path d="M10 10h4v4h-4zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+  </Icon>
+);
+
+export const StopIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
 export const ChevronDownIcon = (props: IconProps) => (
   <Icon {...props}>
     <path d="m6 9 6 6 6-6" />

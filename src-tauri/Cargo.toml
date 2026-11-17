@@ -10,18 +10,41 @@ tauri-build = { version = "2", features = [] }
 cc = "1"
 
 [dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 futures-util = "0.3.34"
+getrandom = "0.4.3"
 percent-encoding = "2.3.2"
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "charset", "http2", "system-proxy", "stream"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.10"
+sevenz-rust2 = "0.25"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
-tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "rt"] }
-windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_System_SystemInformation"] }
+tauri-plugin-opener = "2"
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Dxgi",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_DataExchange",
+    "Win32_System_JobObjects",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+] }
 winreg = "0.56"
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 zip = { version = "9.6.0", default-features = false, features = ["deflate"] }
+ignore = "0.4.34"
+globset = "0.4.21"
+regex = "1.13.1"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+grep-matcher = "0.1.9"
 
 [profile.release]
 codegen-units = 1
@@ -29,3 +52,6 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

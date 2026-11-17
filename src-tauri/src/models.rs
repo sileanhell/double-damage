@@ -15,7 +15,7 @@ use crate::tasks::{
     Progress, Tasks, err_str, http_client, remove_file_quiet, storage_subdir, stream_to_file,
 };
 
-const DIR_NAME: &str = "models";
+pub const DIR_NAME: &str = "models";
 const PART_SUFFIX: &str = ".part";
 const IMPORT_BUF_SIZE: usize = 8 << 20;
 
@@ -56,7 +56,7 @@ fn modified_ms(meta: &std::fs::Metadata) -> u64 {
 }
 
 /// A model file name must be a single, plain path component.
-fn validate_name(name: &str) -> Result<(), String> {
+pub fn validate_name(name: &str) -> Result<(), String> {
     let bad = name.is_empty()
         || name == "."
         || name == ".."

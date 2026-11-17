@@ -5,6 +5,7 @@ import { TextField } from "@kobalte/core/text-field";
 import { createEffect, createResource, createSignal, For, type JSX, on, onCleanup, Show } from "solid-js";
 import { formatBytes, formatCount } from "../lib/format";
 import { type HfModel, type HfModelFile, modelFiles, searchModels } from "../lib/huggingface";
+import { instances, unloadModel } from "../lib/gateway";
 import { t } from "../lib/i18n";
 import {
   deleteLocalModel,
@@ -107,6 +108,9 @@ function InstalledModelRow(props: { model: LocalModel }) {
   const remove = async () => {
     setBusy(true);
     try {
+      // A running server keeps the file mapped; Windows won't delete it until it stops.
+      const key = modelKey(props.model.name);
+      for (const item of instances().filter((item) => modelKey(item.spec.file) === key)) await unloadModel(item.id);
       await deleteLocalModel(props.model.name);
       // A split model keeps its choice while other parts are still there.
       if (!localModels().some((model) => modelKey(model.name) === modelKey(props.model.name))) {

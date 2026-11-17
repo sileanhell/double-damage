@@ -1,6 +1,7 @@
 import { Select } from "@kobalte/core/select";
-import { type ApprovalInfo, APPROVAL_MODES, approvalInfo, setApprovalMode } from "../lib/approval";
+import { type ApprovalInfo, approvalInfo, approvalModes, setApprovalMode } from "../lib/approval";
 import { t } from "../lib/i18n";
+import { currentModel } from "../lib/models";
 import { CheckIcon, ChevronDownIcon, ShieldIcon } from "./icons";
 
 const TRIGGER =
@@ -8,12 +9,14 @@ const TRIGGER =
 
 /** Approval mode selector shown next to the model picker. */
 export function ApprovalPicker() {
+  // Local models don't get "auto": they're too easy to talk into running something harmful.
+  const local = () => currentModel()?.provider === "llama-server";
   return (
     <Select<ApprovalInfo>
-      options={[...APPROVAL_MODES]}
+      options={approvalModes(local())}
       optionValue="value"
       optionTextValue={(item) => t(item.label)}
-      value={approvalInfo()}
+      value={approvalInfo(local())}
       onChange={(item) => item && setApprovalMode(item.value)}
       disallowEmptySelection
       placement="top-start"

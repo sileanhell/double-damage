@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { flushDb } from "./db";
 
 /**
  * Synchronous key/value settings, like localStorage, but kept in `settings.json` in the app data
@@ -68,6 +69,6 @@ if (native) {
   }
   // Don't lose the last batch when the window closes.
   void getCurrentWindow()
-    .onCloseRequested(() => flushStorage())
+    .onCloseRequested(() => Promise.all([flushStorage(), flushDb()]).then(() => undefined))
     .catch(console.error);
 }

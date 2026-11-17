@@ -2,6 +2,8 @@ import { Button } from "@kobalte/core/button";
 import { Dialog } from "@kobalte/core/dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { createResource, createSignal, Show } from "solid-js";
+import { closeDb, reopenDb } from "../lib/db";
+import { instances, unloadModel } from "../lib/gateway";
 import { t } from "../lib/i18n";
 import { flushStorage } from "../lib/storage";
 import { tasksOfKind } from "../lib/tasks";
@@ -41,9 +43,16 @@ export function DataDirSettings() {
     setError("");
     try {
       await flushStorage();
-      // On success this window is replaced by a new one, so the call never returns here.
+      // Open files can't move: stop the model servers and close the chat database first.
+      await Promise.all(instances().map((item) => unloadModel(item.id)));
+      await closeDb();
+      // On success this window is replaced by a new one, so the call normally never returns here;
+      // it does when nothing had to move (the same folder), and then the page carries on.
       await invoke("data_dir_apply", { path: target() });
+      reopenDb();
+      setTarget(undefined);
     } catch (reason) {
+      reopenDb();
       setError(t("dataDir.failed", { reason: String(reason) }));
       setTarget(undefined);
     } finally {

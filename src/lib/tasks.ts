@@ -5,7 +5,7 @@ import { createSignal } from "solid-js";
 /** Long-running backend job (install, download, import) as reported by `task-progress` events. */
 export type Task = {
   id: string;
-  kind: "llama-server" | "download" | "import";
+  kind: "llama-server" | "bash" | "download" | "import";
   label: string;
   received: number;
   total: number | null;

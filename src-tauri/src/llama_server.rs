@@ -208,6 +208,12 @@ fn read_install(dir: &Path) -> Option<InstallInfo> {
     (!info.exe.is_empty() && dir.join(&info.exe).is_file()).then_some(info)
 }
 
+/// The installed `llama-server.exe` under the storage root, if any.
+pub fn installed_exe(root: &Path) -> Option<PathBuf> {
+    let dir = root.join(DIR_NAME);
+    read_install(&dir).map(|info| dir.join(info.exe))
+}
+
 /// Installed build, or (when not installed) the build an install would pick for this machine.
 fn read_status(dir: &Path) -> LlamaServerStatus {
     match read_install(dir) {

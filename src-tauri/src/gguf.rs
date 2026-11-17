@@ -17,7 +17,7 @@ use crate::tasks::{err_str, storage_subdir};
 pub struct ModelInfo {
     architecture: Option<String>,
     /// Context the model was trained for (the most it can use).
-    context_length: Option<u64>,
+    pub context_length: Option<u64>,
     block_count: Option<u64>,
     embedding_length: Option<u64>,
     head_count: Option<u64>,
@@ -36,6 +36,7 @@ pub struct ModelInfo {
 
 enum Value {
     Int(u64),
+    Float(f64),
     Str(String),
     Ints(Vec<u64>),
     Other,
@@ -125,12 +126,15 @@ impl Reader {
                 }
                 Ok(Value::Ints(out))
             }
+            // Rounded to what an f32 actually carries, so 0.7 doesn't come out as 0.699999988.
+            6 => Ok(Value::Float(((f32::from_le_bytes(self.bytes()?) as f64) * 1e6).round() / 1e6)),
+            12 => Ok(Value::Float(f64::from_le_bytes(self.bytes()?))),
             _ => Ok(self.int(kind)?.map_or(Value::Other, Value::Int)),
         }
     }
 }
 
-fn read_info(path: &Path) -> std::io::Result<ModelInfo> {
+fn read_kv(path: &Path) -> std::io::Result<HashMap<String, Value>> {
     let mut r = Reader(BufReader::with_capacity(1 << 16, File::open(path)?));
     if &r.bytes::<4>()? != b"GGUF" {
         return Err(std::io::Error::other("not a GGUF file"));
@@ -147,6 +151,14 @@ fn read_info(path: &Path) -> std::io::Result<ModelInfo> {
         let kind = r.u32()?;
         kv.insert(key, r.value(kind)?);
     }
+    Ok(kv)
+}
+
+fn read_info(path: &Path) -> std::io::Result<ModelInfo> {
+    Ok(info_from(&read_kv(path)?))
+}
+
+fn info_from(kv: &HashMap<String, Value>) -> ModelInfo {
 
     let arch = match kv.get("general.architecture") {
         Some(Value::Str(arch)) => arch.clone(),
@@ -173,7 +185,7 @@ fn read_info(path: &Path) -> std::io::Result<ModelInfo> {
     if let (1, Some(n)) = (head_count_kv.len(), block_count) {
         head_count_kv = vec![head_count_kv[0]; n as usize];
     }
-    Ok(ModelInfo {
+    ModelInfo {
         context_length: int("context_length"),
         block_count,
         embedding_length: int("embedding_length"),
@@ -190,6 +202,60 @@ fn read_info(path: &Path) -> std::io::Result<ModelInfo> {
             _ => None,
         }),
         architecture: (!arch.is_empty()).then_some(arch),
+    }
+}
+
+/// Sampling defaults the model's author recommends (`general.sampling.*`); absent in most files.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Sampling {
+    pub temperature: Option<f64>,
+    pub top_k: Option<u64>,
+    pub top_p: Option<f64>,
+    pub min_p: Option<f64>,
+    pub repeat_penalty: Option<f64>,
+    pub repeat_last_n: Option<u64>,
+}
+
+/// Everything the app needs to know about a model file without running it.
+pub struct Meta {
+    pub info: ModelInfo,
+    pub chat_template: Option<String>,
+    pub sampling: Sampling,
+}
+
+#[cfg(test)]
+impl Meta {
+    pub fn info_arch(&self) -> Option<&str> {
+        self.info.architecture.as_deref()
+    }
+}
+
+pub fn read_meta(path: &Path) -> std::io::Result<Meta> {
+    let kv = read_kv(path)?;
+    let float = |name: &str| match kv.get(&format!("general.sampling.{name}")) {
+        Some(Value::Float(v)) => Some(*v),
+        Some(Value::Int(v)) => Some(*v as f64),
+        _ => None,
+    };
+    let int = |name: &str| match kv.get(&format!("general.sampling.{name}")) {
+        Some(Value::Int(v)) => Some(*v),
+        _ => None,
+    };
+    Ok(Meta {
+        info: info_from(&kv),
+        chat_template: match kv.get("tokenizer.chat_template") {
+            Some(Value::Str(t)) if !t.is_empty() => Some(t.clone()),
+            _ => None,
+        },
+        sampling: Sampling {
+            temperature: float("temp"),
+            top_k: int("top_k"),
+            top_p: float("top_p"),
+            min_p: float("min_p"),
+            repeat_penalty: float("penalty_repeat"),
+            repeat_last_n: int("penalty_last_n"),
+        },
     })
 }
 

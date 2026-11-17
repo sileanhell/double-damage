@@ -1,32 +1,27 @@
 import { Button } from "@kobalte/core/button";
 import { SegmentedControl } from "@kobalte/core/segmented-control";
 import { Slider } from "@kobalte/core/slider";
-import { createResource, For, type JSX, Show } from "solid-js";
+import { createMemo, createResource, For, type JSX, Show } from "solid-js";
 import { formatBytes } from "../lib/format";
-import { hardware } from "../lib/hardware";
 import { t } from "../lib/i18n";
 import {
   contextSteps,
   type Estimate,
-  estimate,
   type FlashAttn,
   type KvType,
   launchArgs,
-  launchSettings,
   maxFullContext,
   type ModelInfo,
   modelInfo,
-  recommendedContext,
+  planLaunch,
   type Resolved,
   SMALL_CTX,
-  type Target,
   updateLaunchSettings,
   forgetLaunchSettings,
 } from "../lib/launch";
 import { modelSetSize } from "../lib/local-models";
-import { modelDevice } from "../lib/model-device";
-import { llamaDevices } from "../lib/providers";
 import { DeviceSelect } from "./device-select";
+import { SamplingSettingsPanel } from "./sampling-settings";
 
 const LINK = "rounded text-xs text-accent/90 transition-colors hover:text-accent";
 
@@ -59,27 +54,16 @@ const DOT: Record<Tone, string> = { ok: "bg-emerald-400", info: "bg-white/30", w
 
 function Panel(props: { model: string; info: ModelInfo }) {
   const size = () => modelSetSize(props.model);
-  const settings = () => launchSettings(props.model);
-  const device = () => llamaDevices().find((item) => item.id === modelDevice(props.model));
-  const target = (): Target => ({
-    gpu: device() ? { memory: device()?.memory ?? 0 } : null,
-    ram: hardware()?.ram ?? 0,
-  });
+  const plan = createMemo(() => planLaunch(props.model, props.info));
+  const settings = () => plan().settings;
+  const device = () => plan().device;
   const steps = () => contextSteps(props.info);
-  const base = (): Resolved => ({
-    ctx: 0,
-    kv: settings().kv ?? "f16",
-    fa: settings().fa ?? "auto",
-    ngl: device() ? settings().ngl : undefined,
-  });
-  const recommended = () => recommendedContext(props.info, size(), base(), target());
-  const ctx = () => {
-    const chosen = settings().ctx;
-    return chosen && chosen <= (steps()[steps().length - 1] ?? chosen) ? chosen : recommended();
-  };
-  const resolved = (): Resolved => ({ ...base(), ctx: ctx() });
-  const est = () => estimate(props.info, size(), resolved(), target());
-  const fullCtx = () => maxFullContext(props.info, size(), base(), target());
+  const base = () => plan().base;
+  const recommended = () => plan().recommended;
+  const ctx = () => plan().resolved.ctx;
+  const resolved = () => plan().resolved;
+  const est = () => plan().est;
+  const fullCtx = () => maxFullContext(props.info, size(), base(), plan().target);
   const update = (patch: Parameters<typeof updateLaunchSettings>[1]) => updateLaunchSettings(props.model, patch);
   const customized = () => Object.keys(settings()).length > 0;
   const threadsMax = () => navigator.hardwareConcurrency || 8;
@@ -196,6 +180,10 @@ function Panel(props: { model: string; info: ModelInfo }) {
         onReset={() => update({ threads: undefined })}
         description={t(device() && est().full ? "launch.threadsGpuHint" : "launch.threadsHint")}
       />
+
+      <div class="border-t border-white/[0.06] pt-4">
+        <SamplingSettingsPanel model={props.model} />
+      </div>
 
       <div class="flex items-center justify-between gap-4 border-t border-white/[0.06] pt-4">
         <code class="min-w-0 truncate font-mono text-[11px] text-white/35" title={args().join(" ")}>

@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { createSignal } from "solid-js";
-import { modelKey } from "./local-models";
+import { hardware } from "./hardware";
+import { modelKey, modelSetSize } from "./local-models";
+import { modelDevice } from "./model-device";
+import { llamaDevices } from "./providers";
 import { storage } from "./storage";
 
 /** What the GGUF header says about a model (see `gguf.rs`). */
@@ -40,8 +43,17 @@ export function modelInfo(name: string): Promise<ModelInfo> {
 export type KvType = "f16" | "q8_0" | "q4_0";
 export type FlashAttn = "auto" | "on" | "off";
 
+/** Sampling for requests to a model; a missing field means the model's own recommendation (or llama-server's default). */
+export type SamplingSettings = {
+  temperature?: number;
+  topK?: number;
+  topP?: number;
+  minP?: number;
+  repeatPenalty?: number;
+};
+
 /** Per-model launch settings; a missing field means "auto" (the recommended value). */
-export type LaunchSettings = { ctx?: number; ngl?: number; kv?: KvType; fa?: FlashAttn; threads?: number };
+export type LaunchSettings = { ctx?: number; ngl?: number; kv?: KvType; fa?: FlashAttn; threads?: number } & SamplingSettings;
 
 const KEY = "dd:model-launch";
 
@@ -242,6 +254,92 @@ export function recommendedContext(info: ModelInfo, size: number, s: Resolved, t
   const below = steps.filter((step) => step <= cap);
   const capped = below[below.length - 1] ?? steps[0];
   return fit === undefined ? Math.min(capped, 8192) : Math.min(fit, capped);
+}
+
+// --- plan -----------------------------------------------------------------------
+
+/** What the gateway's `llama_load` takes (mirrors `LaunchSpec` in gateway/llama.rs). */
+export type LaunchSpec = {
+  file: string;
+  ctx: number;
+  device: string | null;
+  gpuLayers: number;
+  kv: KvType;
+  flashAttn: FlashAttn;
+  threads: number | null;
+};
+
+export type LaunchPlan = {
+  settings: LaunchSettings;
+  device: ReturnType<typeof llamaDevices>[number] | undefined;
+  target: Target;
+  base: Resolved;
+  recommended: number;
+  resolved: Resolved;
+  est: Estimate;
+  spec: LaunchSpec;
+};
+
+/**
+ * Everything about starting `name` with its saved settings on its chosen device: the resolved
+ * values, the memory estimate and the spec to load it with. `reserved` is memory already taken
+ * by other loaded models (subtracted from what this one may use).
+ */
+export function planLaunch(
+  name: string,
+  info: ModelInfo,
+  reserved: { vram?: number; ram?: number } = {},
+): LaunchPlan {
+  const size = modelSetSize(name);
+  const settings = launchSettings(name);
+  const device = llamaDevices().find((item) => item.id === modelDevice(name));
+  const target: Target = {
+    gpu: device ? { memory: Math.max(0, device.memory - (reserved.vram ?? 0)) } : null,
+    ram: Math.max(0, (hardware()?.ram ?? 0) - (reserved.ram ?? 0) / RAM_SHARE),
+  };
+  const steps = contextSteps(info);
+  const base: Resolved = {
+    ctx: 0,
+    kv: settings.kv ?? "f16",
+    fa: settings.fa ?? "auto",
+    ngl: device ? settings.ngl : undefined,
+  };
+  const recommended = recommendedContext(info, size, base, target);
+  const chosen = settings.ctx;
+  const ctx = chosen && chosen <= (steps[steps.length - 1] ?? chosen) ? chosen : recommended;
+  const resolved: Resolved = { ...base, ctx };
+  const est = estimate(info, size, resolved, target);
+  return {
+    settings,
+    device,
+    target,
+    base,
+    recommended,
+    resolved,
+    est,
+    spec: {
+      file: name,
+      ctx,
+      device: device?.id ?? null,
+      gpuLayers: device ? est.gpuLayers : 0,
+      kv: resolved.kv,
+      flashAttn: resolved.fa,
+      threads: settings.threads ?? null,
+    },
+  };
+}
+
+/** Memory a running model takes, from the spec it was started with. */
+export function runningUsage(info: ModelInfo, name: string, spec: LaunchSpec): { vram: number; ram: number } {
+  const target: Target = { gpu: spec.device ? { memory: Number.MAX_SAFE_INTEGER } : null, ram: Number.MAX_SAFE_INTEGER };
+  const est = estimate(
+    info,
+    modelSetSize(name),
+    { ctx: spec.ctx, kv: spec.kv, fa: spec.flashAttn, ngl: spec.device ? spec.gpuLayers : undefined },
+    target,
+  );
+  const sum = (parts: number[]) => parts.reduce((a, b) => a + b, 0);
+  return { vram: spec.device ? sum(est.vramParts) : 0, ram: sum(est.ramParts) };
 }
 
 /** llama-server arguments for these settings (the model path and port are added at launch). */

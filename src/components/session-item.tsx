@@ -3,7 +3,9 @@ import { ContextMenu } from "@kobalte/core/context-menu";
 import { Dialog } from "@kobalte/core/dialog";
 import { TextField } from "@kobalte/core/text-field";
 import { useNavigate } from "@solidjs/router";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
+import { sessionAwaitsApproval } from "../lib/approval";
+import { stepLimitIn, stop, turnIn } from "../lib/chat";
 import { t } from "../lib/i18n";
 import {
   activeSessionId,
@@ -24,6 +26,7 @@ export function SessionItem(props: { session: Session; onHome: () => boolean }) 
   const navigate = useNavigate();
   const [renaming, setRenaming] = createSignal(false);
   const [name, setName] = createSignal("");
+  const waiting = () => sessionAwaitsApproval(props.session.id) || stepLimitIn(props.session.id) !== undefined;
 
   const startRename = () => {
     setName(sessionTitle(props.session));
@@ -45,9 +48,17 @@ export function SessionItem(props: { session: Session; onHome: () => boolean }) 
             navigate("/");
           }}
           aria-current={props.onHome() && activeSessionId() === props.session.id ? "page" : undefined}
-          class="block h-9 w-full truncate rounded-xl px-3 text-left text-[13px] text-white transition-colors hover:bg-white/[0.05] aria-[current=page]:bg-white/[0.08] data-expanded:bg-white/[0.05]"
+          class="flex h-9 w-full items-center gap-2 rounded-xl px-3 text-left text-[13px] text-white transition-colors hover:bg-white/[0.05] aria-[current=page]:bg-white/[0.08] data-expanded:bg-white/[0.05]"
         >
-          {sessionTitle(props.session)}
+          <span class="min-w-0 flex-1 truncate">{sessionTitle(props.session)}</span>
+          {/* A chat that's answering, or waiting for the user (approval, step limit). */}
+          <Show when={turnIn(props.session.id)}>
+            <span
+              title={t(waiting() ? "sidebar.waiting" : "sidebar.busy")}
+              class="size-1.5 shrink-0 rounded-full"
+              classList={{ "bg-amber-300": waiting(), "animate-pulse bg-accent": !waiting() }}
+            />
+          </Show>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content class="z-50 min-w-44 rounded-xl border border-white/10 bg-white/[0.06] p-1.5 shadow-2xl outline-none backdrop-blur-2xl">
@@ -61,7 +72,10 @@ export function SessionItem(props: { session: Session; onHome: () => boolean }) 
             </ContextMenu.Item>
             <ContextMenu.Separator class="-mx-1.5 my-1.5 h-px border-0 bg-white/10" />
             <ContextMenu.Item
-              onSelect={() => deleteSession(props.session.id)}
+              onSelect={() => {
+                stop(props.session.id);
+                deleteSession(props.session.id);
+              }}
               class="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-red-300/80 outline-none transition-colors data-highlighted:bg-red-500/10 data-highlighted:text-red-300"
             >
               <TrashIcon class="size-3.5 shrink-0" />

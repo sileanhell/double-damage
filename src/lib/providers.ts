@@ -76,9 +76,22 @@ const [devices] = createRoot(() =>
       const status = llamaServer();
       return status?.installed ? `${status.version}:${status.backend}` : false;
     },
-    () => invoke<LlamaDevice[]>("llama_server_devices").catch(() => []),
+    // null = listing failed (told apart from "no GPUs").
+    () => invoke<LlamaDevice[]>("llama_server_devices").catch((error): null => (console.error(error), null)),
   ),
 );
 
 /** GPUs the installed llama-server can run models on; empty when it isn't installed. */
 export const llamaDevices = (): LlamaDevice[] => (llamaServer()?.installed ? (devices() ?? []) : []);
+
+/**
+ * Whether the device list is known: "ready", "pending" while llama-server is still listing them
+ * (CUDA start-up can take seconds), "failed" when listing them didn't work.
+ */
+export function llamaDevicesState(): "ready" | "pending" | "failed" {
+  const status = llamaServer();
+  if (!status) return "pending";
+  if (!status.installed) return "ready";
+  if (devices.loading || devices.state === "unresolved") return "pending";
+  return devices() === null ? "failed" : "ready";
+}

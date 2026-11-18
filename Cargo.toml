@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/dd-providers",
+    "crates/dd-tools",
+    "crates/dd-cli",
+    "crates/dd-desktop/backend",
+]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+dd-providers = { path = "crates/dd-providers" }
+dd-tools = { path = "crates/dd-tools" }
+
+ratatui = "0.30.2"
+tauri = "2.12.6"
+tauri-build = "2.7.5"
+
+[profile.release]
+lto = "thin"
+strip = true

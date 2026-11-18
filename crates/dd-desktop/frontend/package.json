@@ -1,0 +1,15 @@
+{
+  "name": "dd-desktop-frontend",
+  "type": "module",
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.5",
+    "@solidjs/web": "^2.0.0",
+    "solid-js": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.5",
+    "typescript": "^7.0.2",
+    "@solidjs/vite-plugin": "^3.0.1",
+    "vite": "^8.3.8"
+  }
+}

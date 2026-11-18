@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "dd",
+  "version": "0.1.0",
+  "identifier": "com.dd.desktop",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../frontend/dist",
+    "beforeDevCommand": { "script": "bunx vite", "cwd": "../frontend" },
+    "beforeBuildCommand": { "script": "bunx tsc --noEmit && bunx vite build", "cwd": "../frontend" }
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "dd", "width": 800, "height": 600 }]
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/icon.png", "icons/icon.ico"]
+  }
+}

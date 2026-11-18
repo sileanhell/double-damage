@@ -1,0 +1,3 @@
+[package]
+name = "dd-tools"
+edition.workspace = true

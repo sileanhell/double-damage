@@ -1,0 +1,17 @@
+:root { color-scheme: dark; }
+body {
+  margin: 0; background: #16181d; color: #d7dae0;
+  font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+}
+main { padding: 24px; }
+h1 { margin: 0 0 16px; color: #4fb3d9; }
+.buttons { display: flex; gap: 8px; }
+button {
+  font: inherit; color: inherit; background: #2a2f38; cursor: pointer;
+  border: 1px solid #2c313a; border-radius: 6px; padding: 8px 14px;
+}
+button:hover { border-color: #4fb3d9; }
+.result {
+  margin-top: 16px; padding: 12px; min-height: 40px;
+  background: #1e2128; border: 1px solid #2c313a; border-radius: 6px;
+}

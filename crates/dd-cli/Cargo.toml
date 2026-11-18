@@ -1,0 +1,12 @@
+[package]
+name = "dd-cli"
+edition.workspace = true
+
+[[bin]]
+name = "dd"
+path = "src/main.rs"
+
+[dependencies]
+dd-providers.workspace = true
+dd-tools.workspace = true
+ratatui.workspace = true

@@ -1,0 +1,3 @@
+[package]
+name = "dd-providers"
+edition.workspace = true

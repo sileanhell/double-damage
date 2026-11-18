@@ -1,0 +1,11 @@
+[package]
+name = "dd-desktop"
+edition.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+dd-providers.workspace = true
+dd-tools.workspace = true
+tauri.workspace = true

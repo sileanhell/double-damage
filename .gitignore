@@ -1,5 +1,4 @@
 /target
-/dist
+**/dist
 **/gen/schemas
 node_modules
-/crates/dd-desktop/frontend/dist

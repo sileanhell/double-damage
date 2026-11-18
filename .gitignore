@@ -2,3 +2,4 @@
 **/dist
 **/gen/schemas
 node_modules
+**/credentials.toml

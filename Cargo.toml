@@ -3,7 +3,7 @@ resolver = "3"
 members = [
     "crates/dd-providers",
     "crates/dd-tools",
-    "crates/dd-cli",
+    "crates/dd-terminal",
     "crates/dd-desktop/backend",
 ]
 

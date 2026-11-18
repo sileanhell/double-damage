@@ -2,6 +2,7 @@
   "scripts": {
     "dev:desktop": "cd crates/dd-desktop/frontend && bun install && TAURI_APP_PATH=../backend TAURI_FRONTEND_PATH=. bunx tauri dev",
     "build:desktop": "cd crates/dd-desktop/frontend && bun install && TAURI_APP_PATH=../backend TAURI_FRONTEND_PATH=. bunx tauri build && cd ../../.. && cp target/release/dd-desktop.exe dist/dd-desktop.exe",
-    "build:cli": "cargo build -p dd-cli --release && cp target/release/dd.exe dist/dd.exe"
+    "dev:cli": "cargo run -p dd-terminal",
+    "build:cli": "cargo build -p dd-terminal --release && cp target/release/dd.exe dist/dd.exe"
   }
 }

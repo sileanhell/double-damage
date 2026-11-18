@@ -1,0 +1,15 @@
+[package]
+name = "dd-terminal"
+edition.workspace = true
+
+[[bin]]
+name = "dd"
+path = "src/main.rs"
+
+[dependencies]
+arboard = "3"
+dd-providers.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+ratatui.workspace = true
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
